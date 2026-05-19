@@ -1,0 +1,459 @@
+--[[
+    Standalone Hitbox Expander + ESP Script + Auto Collect CincoDeMayo2026
+    Extracted from MvS.lua by FrannnDev
+    Features:
+      - Hitbox Expander: increases enemy HumanoidRootPart size/color/transparency
+      - Anti‑Wall Shot: expands hitbox only when enemy is visible
+      - ESP: highlights enemies through walls (team-colored)
+      - Auto Collect CincoDeMayo2026: automatically claims event reward on start/respawn
+--]]
+
+-- Load Rayfield UI library
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- ==================== Helper Functions (from original) ====================
+
+local function normalizeName(n)
+    return tostring(n):gsub("%s+", "")
+end
+
+local function getTeamFrames()
+    local ok, redFrame, blueFrame = pcall(function()
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pg then return nil, nil end
+        local main = pg:FindFirstChild("Main")
+        if not main then return nil, nil end
+        local mgf = main:FindFirstChild("MainGameFrame")
+        if not mgf then return nil, nil end
+        local pf = mgf:FindFirstChild("PlayersFrame")
+        if not pf then return nil, nil end
+        return pf:FindFirstChild("TeamRedFrame"), pf:FindFirstChild("TeamBlueFrame")
+    end)
+    if not ok or not redFrame or not blueFrame then
+        return nil, nil
+    end
+    return redFrame, blueFrame
+end
+
+local function readNames(frame)
+    local names = {}
+    for _, child in ipairs(frame:GetChildren()) do
+        if child:IsA("Frame") then
+            table.insert(names, child.Name)
+        end
+    end
+    return names
+end
+
+local function getEnemies()
+    local redFrame, blueFrame = getTeamFrames()
+    if not redFrame or not blueFrame then
+        return {}
+    end
+
+    local redRaw = readNames(redFrame)
+    local blueRaw = readNames(blueFrame)
+
+    local youInRed, youInBlue = false, false
+    local redSet, blueSet = {}, {}
+
+    for _, n in ipairs(redRaw) do
+        local nn = normalizeName(n)
+        redSet[nn] = true
+        if nn == normalizeName(LocalPlayer.Name) then
+            youInRed = true
+        end
+    end
+
+    for _, n in ipairs(blueRaw) do
+        local nn = normalizeName(n)
+        blueSet[nn] = true
+        if nn == normalizeName(LocalPlayer.Name) then
+            youInBlue = true
+        end
+    end
+    if not (youInRed or youInBlue) then
+        return {}
+    end
+
+    local enemySet = youInRed and blueSet or redSet
+    local enemies = {}
+
+    for name,_ in pairs(enemySet) do
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if normalizeName(plr.Name) == name and plr ~= LocalPlayer then
+                table.insert(enemies, plr)
+            end
+        end
+    end
+
+    return enemies
+end
+
+-- ==================== Hitbox Expander with Anti‑Wall ====================
+
+_G.HitboxEnabled = false
+_G.AntiWall = false
+_G.HeadSize = nil      -- set via input
+_G.Transparency = nil  -- set via input
+_G.SelectedColor = nil -- set via dropdown
+_G.Originals = {}      -- store original properties per player
+local visibilityCache = {}
+
+local function isVisible(part)
+    local cam = Workspace.CurrentCamera
+    if not cam then return true end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {LocalPlayer.Character}
+    local result = Workspace:Raycast(cam.CFrame.Position, (part.Position - cam.CFrame.Position), params)
+    if not result then return true end
+    return result.Instance:IsDescendantOf(part.Parent)
+end
+
+local function applyHitbox(player)
+    if player == LocalPlayer then return end
+    local char = player.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- Store original properties once
+    if not _G.Originals[player.Name] then
+        _G.Originals[player.Name] = {
+            Size = hrp.Size,
+            Transparency = hrp.Transparency,
+            Color = hrp.BrickColor,
+            Material = hrp.Material,
+            CanCollide = hrp.CanCollide
+        }
+    end
+    local orig = _G.Originals[player.Name]
+
+    -- If anti-wall is ON and enemy is NOT visible, revert to original
+    if _G.AntiWall and visibilityCache[player.Name] == false then
+        hrp.Size = orig.Size
+        hrp.Transparency = orig.Transparency
+        hrp.BrickColor = orig.Color
+        hrp.Material = orig.Material
+        hrp.CanCollide = orig.CanCollide
+        return
+    end
+
+    -- Otherwise apply custom hitbox if enabled
+    if _G.HitboxEnabled then
+        if _G.HeadSize then hrp.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize) end
+        if _G.Transparency then hrp.Transparency = _G.Transparency end
+        if _G.SelectedColor then hrp.BrickColor = BrickColor.new(_G.SelectedColor) end
+        hrp.Material = Enum.Material.Neon
+        hrp.CanCollide = false
+    else
+        -- Hitbox disabled: restore original
+        hrp.Size = orig.Size
+        hrp.Transparency = orig.Transparency
+        hrp.BrickColor = orig.Color
+        hrp.Material = orig.Material
+        hrp.CanCollide = orig.CanCollide
+    end
+end
+
+-- Update visibility cache for anti‑wall
+task.spawn(function()
+    while true do
+        if _G.AntiWall then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    local char = plr.Character
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        visibilityCache[plr.Name] = isVisible(hrp)
+                    end
+                end
+            end
+        end
+        task.wait(0.15)
+    end
+end)
+
+-- Continuously apply hitbox to all players
+task.spawn(function()
+    while true do
+        for _, plr in ipairs(Players:GetPlayers()) do
+            applyHitbox(plr)
+        end
+        task.wait(0.16)
+    end
+end)
+
+-- Re‑apply when characters spawn
+local function onCharacterAdded(player, character)
+    character:WaitForChild("HumanoidRootPart", 5)
+    task.wait(0.1)
+    applyHitbox(player)
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    plr.CharacterAdded:Connect(function(char) onCharacterAdded(plr, char) end)
+    if plr.Character then onCharacterAdded(plr, plr.Character) end
+end
+Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function(char) onCharacterAdded(plr, char) end)
+end)
+
+-- ==================== ESP (Enemy Team Highlight) ====================
+
+_G.ESPEnabled = false
+local highlights = {}
+
+local function removeHighlight(player)
+    local h = highlights[player]
+    if h then
+        pcall(function() h:Destroy() end)
+        highlights[player] = nil
+    end
+end
+
+local function createHighlight(player, color)
+    local char = player.Character
+    if not char then return end
+    if not char:FindFirstChild("HumanoidRootPart") then return end
+
+    local h = highlights[player]
+    if not h or h.Parent == nil or h.Adornee ~= char then
+        if h then pcall(function() h:Destroy() end) end
+        h = Instance.new("Highlight")
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.FillTransparency = 0.5
+        h.OutlineColor = Color3.fromRGB(255,255,255)
+        h.Parent = char
+        highlights[player] = h
+    end
+    h.Adornee = char
+    h.FillColor = color
+end
+
+local function updateESP()
+    if not _G.ESPEnabled then
+        -- Clean up all highlights if ESP is off
+        for plr,_ in pairs(highlights) do
+            removeHighlight(plr)
+        end
+        return
+    end
+
+    local enemies = getEnemies()
+    if not enemies or #enemies == 0 then
+        -- No enemies, remove all highlights
+        for plr,_ in pairs(highlights) do
+            removeHighlight(plr)
+        end
+        return
+    end
+
+    -- Determine enemy color based on local player's team
+    local redFrame, blueFrame = getTeamFrames()
+    local enemyColor
+    if redFrame and blueFrame then
+        local redRaw = readNames(redFrame)
+        local blueRaw = readNames(blueFrame)
+        local youInRed = false
+        for _, n in ipairs(redRaw) do
+            if normalizeName(n) == normalizeName(LocalPlayer.Name) then youInRed = true; break end
+        end
+        enemyColor = youInRed and Color3.fromRGB(0, 0, 255) or Color3.fromRGB(255, 0, 0)
+    else
+        enemyColor = Color3.fromRGB(255, 0, 0) -- fallback red
+    end
+
+    -- Remove highlights for players no longer enemies
+    local enemySet = {}
+    for _, e in ipairs(enemies) do enemySet[e] = true end
+    for plr,_ in pairs(highlights) do
+        if not enemySet[plr] then
+            removeHighlight(plr)
+        end
+    end
+
+    -- Add/update highlights for current enemies
+    for _, enemy in ipairs(enemies) do
+        createHighlight(enemy, enemyColor)
+    end
+end
+
+-- Run ESP updates frequently
+RunService.RenderStepped:Connect(function()
+    if _G.ESPEnabled then
+        pcall(updateESP)
+    else
+        -- Clean highlights when disabled
+        for plr,_ in pairs(highlights) do
+            removeHighlight(plr)
+        end
+    end
+end)
+
+-- Re‑trigger ESP when characters change
+local function onESPCharacterAdded(player)
+    if _G.ESPEnabled then
+        task.defer(updateESP)
+    end
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+    plr.CharacterAdded:Connect(function() onESPCharacterAdded(plr) end)
+end
+Players.PlayerAdded:Connect(function(plr)
+    plr.CharacterAdded:Connect(function() onESPCharacterAdded(plr) end)
+end)
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    if _G.ESPEnabled then updateESP() end
+end)
+
+-- ==================== Auto Collect CincoDeMayo2026 ====================
+
+_G.AutoCollectCinco = false
+
+local function collectCincoDeMayo()
+    if not _G.AutoCollectCinco then return end
+    local remote = ReplicatedStorage:FindFirstChild("CincoDeMayo2026")
+    if remote and remote:FindFirstChild("RemoteEvent") then
+        local event = remote.RemoteEvent
+        pcall(function()
+            event:FireServer("collect")
+            print("Auto-collected CincoDeMayo2026 reward")
+        end)
+    else
+        -- Remote not found, maybe game version changed
+        -- Optionally retry later
+    end
+end
+
+-- Collect when character loads (game start or respawn)
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(2) -- wait for game to fully load
+    collectCincoDeMayo()
+end)
+
+-- Also collect immediately if character already exists
+if LocalPlayer.Character then
+    task.wait(2)
+    collectCincoDeMayo()
+end
+
+-- ==================== GUI (Rayfield) ====================
+
+local Window = Rayfield:CreateWindow({
+    Name = "Hitbox + ESP + Auto Collect",
+    LoadingTitle = "All-in-One",
+    LoadingSubtitle = "By FrannnDev (extracted)",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "HitboxESPConfig",
+        FileName = "Config"
+    },
+    KeySystem = false
+})
+
+local MainTab = Window:CreateTab("Main", 15403121940) -- placeholder icon
+
+MainTab:CreateLabel("Hitbox Expander (with Anti‑Wall)")
+
+MainTab:CreateToggle({
+    Name = "Enable Hitbox",
+    CurrentValue = false,
+    Callback = function(v)
+        _G.HitboxEnabled = v
+        for _, plr in ipairs(Players:GetPlayers()) do
+            applyHitbox(plr)
+        end
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Anti‑Wall Shot (only expand when visible)",
+    CurrentValue = false,
+    Callback = function(v)
+        _G.AntiWall = v
+        if not v then
+            visibilityCache = {}
+            for _, plr in ipairs(Players:GetPlayers()) do
+                applyHitbox(plr)
+            end
+        end
+    end
+})
+
+MainTab:CreateInput({
+    Name = "Head Size (1-50)",
+    PlaceholderText = "e.g., 5",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(txt)
+        local n = tonumber(txt)
+        _G.HeadSize = n and math.clamp(n, 1, 50) or nil
+        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
+    end
+})
+
+MainTab:CreateInput({
+    Name = "Transparency (0-1)",
+    PlaceholderText = "0 = solid, 1 = invisible",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(txt)
+        local n = tonumber(txt)
+        _G.Transparency = n and math.clamp(n, 0, 1) or nil
+        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
+    end
+})
+
+MainTab:CreateDropdown({
+    Name = "Hitbox Color",
+    Options = {"Bright red", "Bright blue", "Bright yellow", "Bright green", "White", "Black", "Gray"},
+    CurrentOption = "Bright red",
+    Callback = function(opt)
+        _G.SelectedColor = opt
+        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
+    end
+})
+
+MainTab:CreateLabel("ESP (Enemy Team Glow)")
+
+MainTab:CreateToggle({
+    Name = "Enable ESP",
+    CurrentValue = false,
+    Callback = function(v)
+        _G.ESPEnabled = v
+        if v then
+            updateESP()
+        else
+            for plr,_ in pairs(highlights) do
+                removeHighlight(plr)
+            end
+        end
+    end
+})
+
+MainTab:CreateLabel("Event Collector")
+
+MainTab:CreateToggle({
+    Name = "Auto Collect CincoDeMayo2026",
+    CurrentValue = false,
+    Callback = function(v)
+        _G.AutoCollectCinco = v
+        if v then
+            -- Attempt to collect immediately if already in game
+            collectCincoDeMayo()
+        end
+    end
+})
+
+MainTab:CreateLabel("Note: ESP color automatically adapts to enemy team.\nAuto collect fires on game start/respawn.")
+
+print("dih")
