@@ -1,14 +1,11 @@
 --[[
-    Standalone Hitbox Expander + ESP Script + Auto Collect CincoDeMayo2026
-    Extracted from MvS.lua by FrannnDev
-    Features:
-      - Hitbox Expander: increases enemy HumanoidRootPart size/color/transparency
-      - Anti‑Wall Shot: expands hitbox only when enemy is visible
-      - ESP: highlights enemies through walls (team-colored)
-      - Auto Collect CincoDeMayo2026: automatically claims event reward on start/respawn
+    All-in-One: Hitbox + ESP + Auto Collect Cinco Pickups
+    - Hitbox expander (size, color, transparency, anti‑wall)
+    - ESP (enemy team highlight through walls)
+    - Auto‑collect physical pickups (Sombrero) via TouchInterest
 --]]
 
--- Load Rayfield UI library
+-- Load Rayfield
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 -- Services
@@ -18,7 +15,7 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
--- ==================== Helper Functions (from original) ====================
+-- ==================== Helper Functions ====================
 
 local function normalizeName(n)
     return tostring(n):gsub("%s+", "")
@@ -97,14 +94,14 @@ local function getEnemies()
     return enemies
 end
 
--- ==================== Hitbox Expander with Anti‑Wall ====================
+-- ==================== Hitbox Expander ====================
 
 _G.HitboxEnabled = false
 _G.AntiWall = false
-_G.HeadSize = nil      -- set via input
-_G.Transparency = nil  -- set via input
-_G.SelectedColor = nil -- set via dropdown
-_G.Originals = {}      -- store original properties per player
+_G.HeadSize = nil
+_G.Transparency = nil
+_G.SelectedColor = nil
+_G.Originals = {}
 local visibilityCache = {}
 
 local function isVisible(part)
@@ -125,7 +122,6 @@ local function applyHitbox(player)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    -- Store original properties once
     if not _G.Originals[player.Name] then
         _G.Originals[player.Name] = {
             Size = hrp.Size,
@@ -137,7 +133,6 @@ local function applyHitbox(player)
     end
     local orig = _G.Originals[player.Name]
 
-    -- If anti-wall is ON and enemy is NOT visible, revert to original
     if _G.AntiWall and visibilityCache[player.Name] == false then
         hrp.Size = orig.Size
         hrp.Transparency = orig.Transparency
@@ -147,7 +142,6 @@ local function applyHitbox(player)
         return
     end
 
-    -- Otherwise apply custom hitbox if enabled
     if _G.HitboxEnabled then
         if _G.HeadSize then hrp.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize) end
         if _G.Transparency then hrp.Transparency = _G.Transparency end
@@ -155,7 +149,6 @@ local function applyHitbox(player)
         hrp.Material = Enum.Material.Neon
         hrp.CanCollide = false
     else
-        -- Hitbox disabled: restore original
         hrp.Size = orig.Size
         hrp.Transparency = orig.Transparency
         hrp.BrickColor = orig.Color
@@ -164,7 +157,7 @@ local function applyHitbox(player)
     end
 end
 
--- Update visibility cache for anti‑wall
+-- Anti-wall visibility updater
 task.spawn(function()
     while true do
         if _G.AntiWall then
@@ -182,7 +175,7 @@ task.spawn(function()
     end
 end)
 
--- Continuously apply hitbox to all players
+-- Hitbox application loop
 task.spawn(function()
     while true do
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -192,7 +185,7 @@ task.spawn(function()
     end
 end)
 
--- Re‑apply when characters spawn
+-- New character connection
 local function onCharacterAdded(player, character)
     character:WaitForChild("HumanoidRootPart", 5)
     task.wait(0.1)
@@ -207,7 +200,7 @@ Players.PlayerAdded:Connect(function(plr)
     plr.CharacterAdded:Connect(function(char) onCharacterAdded(plr, char) end)
 end)
 
--- ==================== ESP (Enemy Team Highlight) ====================
+-- ==================== ESP ====================
 
 _G.ESPEnabled = false
 local highlights = {}
@@ -241,7 +234,6 @@ end
 
 local function updateESP()
     if not _G.ESPEnabled then
-        -- Clean up all highlights if ESP is off
         for plr,_ in pairs(highlights) do
             removeHighlight(plr)
         end
@@ -250,29 +242,28 @@ local function updateESP()
 
     local enemies = getEnemies()
     if not enemies or #enemies == 0 then
-        -- No enemies, remove all highlights
         for plr,_ in pairs(highlights) do
             removeHighlight(plr)
         end
         return
     end
 
-    -- Determine enemy color based on local player's team
     local redFrame, blueFrame = getTeamFrames()
     local enemyColor
     if redFrame and blueFrame then
         local redRaw = readNames(redFrame)
-        local blueRaw = readNames(blueFrame)
         local youInRed = false
         for _, n in ipairs(redRaw) do
-            if normalizeName(n) == normalizeName(LocalPlayer.Name) then youInRed = true; break end
+            if normalizeName(n) == normalizeName(LocalPlayer.Name) then
+                youInRed = true
+                break
+            end
         end
         enemyColor = youInRed and Color3.fromRGB(0, 0, 255) or Color3.fromRGB(255, 0, 0)
     else
-        enemyColor = Color3.fromRGB(255, 0, 0) -- fallback red
+        enemyColor = Color3.fromRGB(255, 0, 0)
     end
 
-    -- Remove highlights for players no longer enemies
     local enemySet = {}
     for _, e in ipairs(enemies) do enemySet[e] = true end
     for plr,_ in pairs(highlights) do
@@ -281,25 +272,21 @@ local function updateESP()
         end
     end
 
-    -- Add/update highlights for current enemies
     for _, enemy in ipairs(enemies) do
         createHighlight(enemy, enemyColor)
     end
 end
 
--- Run ESP updates frequently
 RunService.RenderStepped:Connect(function()
     if _G.ESPEnabled then
         pcall(updateESP)
     else
-        -- Clean highlights when disabled
         for plr,_ in pairs(highlights) do
             removeHighlight(plr)
         end
     end
 end)
 
--- Re‑trigger ESP when characters change
 local function onESPCharacterAdded(player)
     if _G.ESPEnabled then
         task.defer(updateESP)
@@ -317,53 +304,84 @@ LocalPlayer.CharacterAdded:Connect(function()
     if _G.ESPEnabled then updateESP() end
 end)
 
--- ==================== Auto Collect CincoDeMayo2026 ====================
+-- ==================== Auto Collect Cinco Pickups ====================
 
-_G.AutoCollectCinco = false
+_G.AutoCollectPickups = false
+_G.CollectDelay = 0.5
 
-local function collectCincoDeMayo()
-    if not _G.AutoCollectCinco then return end
-    local remote = ReplicatedStorage:FindFirstChild("CincoDeMayo2026")
-    if remote and remote:FindFirstChild("RemoteEvent") then
-        local event = remote.RemoteEvent
-        pcall(function()
-            event:FireServer("collect")
-            print("Auto-collected CincoDeMayo2026 reward")
-        end)
-    else
-        -- Remote not found, maybe game version changed
-        -- Optionally retry later
+local SpawnablesClient = workspace:FindFirstChild("Spawnables") and workspace.Spawnables:FindFirstChild("SpawnablesClient")
+
+local function getPickups()
+    local pickups = {}
+    if not SpawnablesClient then return pickups end
+    for _, obj in ipairs(SpawnablesClient:GetChildren()) do
+        if obj:IsA("BasePart") and obj:FindFirstChild("TouchInterest") then
+            table.insert(pickups, obj)
+        end
     end
+    return pickups
 end
 
--- Collect when character loads (game start or respawn)
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(2) -- wait for game to fully load
-    collectCincoDeMayo()
+local function touchPickup(part)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- Optional teleport (uncomment if firetouchinterest doesn't work from distance)
+    -- hrp.CFrame = part.CFrame * CFrame.new(0, 2, 0)
+    -- task.wait(0.05)
+
+    pcall(function()
+        firetouchinterest(hrp, part, 0)
+        task.wait(0.05)
+        firetouchinterest(hrp, part, 1)
+    end)
+end
+
+-- Main auto-collect loop
+task.spawn(function()
+    while true do
+        if _G.AutoCollectPickups then
+            local pickups = getPickups()
+            for _, pickup in ipairs(pickups) do
+                if pickup and pickup.Parent then
+                    touchPickup(pickup)
+                    task.wait(_G.CollectDelay)
+                end
+            end
+        end
+        task.wait(0.2)
+    end
 end)
 
--- Also collect immediately if character already exists
-if LocalPlayer.Character then
-    task.wait(2)
-    collectCincoDeMayo()
+-- Instant collect when a new pickup spawns
+if SpawnablesClient then
+    SpawnablesClient.ChildAdded:Connect(function(child)
+        if _G.AutoCollectPickups and child:IsA("BasePart") and child:FindFirstChild("TouchInterest") then
+            task.wait(0.1)
+            touchPickup(child)
+        end
+    end)
 end
 
--- ==================== GUI (Rayfield) ====================
+-- ==================== Rayfield GUI ====================
 
 local Window = Rayfield:CreateWindow({
     Name = "Hitbox + ESP + Auto Collect",
     LoadingTitle = "All-in-One",
-    LoadingSubtitle = "By FrannnDev (extracted)",
+    LoadingSubtitle = "Cinco de Mayo Edition",
     ConfigurationSaving = {
         Enabled = true,
-        FolderName = "HitboxESPConfig",
+        FolderName = "CincoTools",
         FileName = "Config"
     },
     KeySystem = false
 })
 
-local MainTab = Window:CreateTab("Main", 15403121940) -- placeholder icon
+local MainTab = Window:CreateTab("Main", 15403121940)
 
+-- Hitbox section
 MainTab:CreateLabel("Hitbox Expander (with Anti‑Wall)")
 
 MainTab:CreateToggle({
@@ -371,9 +389,7 @@ MainTab:CreateToggle({
     CurrentValue = false,
     Callback = function(v)
         _G.HitboxEnabled = v
-        for _, plr in ipairs(Players:GetPlayers()) do
-            applyHitbox(plr)
-        end
+        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
     end
 })
 
@@ -384,9 +400,7 @@ MainTab:CreateToggle({
         _G.AntiWall = v
         if not v then
             visibilityCache = {}
-            for _, plr in ipairs(Players:GetPlayers()) do
-                applyHitbox(plr)
-            end
+            for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
         end
     end
 })
@@ -423,6 +437,7 @@ MainTab:CreateDropdown({
     end
 })
 
+-- ESP section
 MainTab:CreateLabel("ESP (Enemy Team Glow)")
 
 MainTab:CreateToggle({
@@ -440,20 +455,54 @@ MainTab:CreateToggle({
     end
 })
 
-MainTab:CreateLabel("Event Collector")
+-- Auto Collect section
+MainTab:CreateLabel("Auto Collect Cinco Pickups")
 
 MainTab:CreateToggle({
-    Name = "Auto Collect CincoDeMayo2026",
+    Name = "Auto Collect Pickups",
     CurrentValue = false,
     Callback = function(v)
-        _G.AutoCollectCinco = v
-        if v then
-            -- Attempt to collect immediately if already in game
-            collectCincoDeMayo()
+        _G.AutoCollectPickups = v
+    end
+})
+
+MainTab:CreateSlider({
+    Name = "Collect Delay (seconds)",
+    Range = {0.2, 2},
+    Increment = 0.1,
+    Suffix = "s",
+    CurrentValue = 0.5,
+    Callback = function(v)
+        _G.CollectDelay = v
+    end
+})
+
+MainTab:CreateButton({
+    Name = "Test Collect Now",
+    Callback = function()
+        local pickups = getPickups()
+        if #pickups > 0 then
+            for _, p in ipairs(pickups) do
+                touchPickup(p)
+                task.wait(0.2)
+            end
+            Rayfield:Notify({
+                Title = "Auto Collect",
+                Content = "Touched " .. #pickups .. " pickups",
+                Duration = 2,
+                Image = 15403175166
+            })
+        else
+            Rayfield:Notify({
+                Title = "Auto Collect",
+                Content = "No pickups found right now",
+                Duration = 2,
+                Image = 15403175166
+            })
         end
     end
 })
 
-MainTab:CreateLabel("Note: ESP color automatically adapts to enemy team.\nAuto collect fires on game start/respawn.")
+MainTab:CreateLabel("Note: ESP color adapts to enemy team.\nAuto‑collect touches physical Sombrero pickups.")
 
-print("dih")
+print("All features loaded. Use the Rayfield GUI (side button).")
