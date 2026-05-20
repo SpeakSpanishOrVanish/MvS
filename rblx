@@ -1,25 +1,18 @@
 --[[
-    All-in-One: Hitbox + ESP + Safe Auto Collect Cinco Pickups
-    - Hitbox expander (size, color, transparency, anti‑wall)
-    - ESP (enemy team highlight through walls)
-    - Safe auto‑collect: touches one pickup at a time with a delay
+    Safe All-in-One: Hitbox + ESP + Auto Collect Cinco
+    - Distance‑filtered auto‑collect (only touches nearby pickups)
+    - Slow, one‑pickup‑at‑a‑time loop to avoid crashes
 --]]
 
--- Load Rayfield
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
 -- ==================== Helper Functions ====================
-
-local function normalizeName(n)
-    return tostring(n):gsub("%s+", "")
-end
+local function normalizeName(n) return tostring(n):gsub("%s+", "") end
 
 local function getTeamFrames()
     local ok, redFrame, blueFrame = pcall(function()
@@ -33,56 +26,38 @@ local function getTeamFrames()
         if not pf then return nil, nil end
         return pf:FindFirstChild("TeamRedFrame"), pf:FindFirstChild("TeamBlueFrame")
     end)
-    if not ok or not redFrame or not blueFrame then
-        return nil, nil
-    end
+    if not ok or not redFrame or not blueFrame then return nil, nil end
     return redFrame, blueFrame
 end
 
 local function readNames(frame)
     local names = {}
     for _, child in ipairs(frame:GetChildren()) do
-        if child:IsA("Frame") then
-            table.insert(names, child.Name)
-        end
+        if child:IsA("Frame") then table.insert(names, child.Name) end
     end
     return names
 end
 
 local function getEnemies()
     local redFrame, blueFrame = getTeamFrames()
-    if not redFrame or not blueFrame then
-        return {}
-    end
-
+    if not redFrame or not blueFrame then return {} end
     local redRaw = readNames(redFrame)
     local blueRaw = readNames(blueFrame)
-
     local youInRed, youInBlue = false, false
     local redSet, blueSet = {}, {}
-
     for _, n in ipairs(redRaw) do
         local nn = normalizeName(n)
         redSet[nn] = true
-        if nn == normalizeName(LocalPlayer.Name) then
-            youInRed = true
-        end
+        if nn == normalizeName(LocalPlayer.Name) then youInRed = true end
     end
-
     for _, n in ipairs(blueRaw) do
         local nn = normalizeName(n)
         blueSet[nn] = true
-        if nn == normalizeName(LocalPlayer.Name) then
-            youInBlue = true
-        end
+        if nn == normalizeName(LocalPlayer.Name) then youInBlue = true end
     end
-    if not (youInRed or youInBlue) then
-        return {}
-    end
-
+    if not (youInRed or youInBlue) then return {} end
     local enemySet = youInRed and blueSet or redSet
     local enemies = {}
-
     for name,_ in pairs(enemySet) do
         for _, plr in ipairs(Players:GetPlayers()) do
             if normalizeName(plr.Name) == name and plr ~= LocalPlayer then
@@ -90,12 +65,10 @@ local function getEnemies()
             end
         end
     end
-
     return enemies
 end
 
 -- ==================== Hitbox Expander ====================
-
 _G.HitboxEnabled = false
 _G.AntiWall = false
 _G.HeadSize = nil
@@ -121,7 +94,6 @@ local function applyHitbox(player)
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
     if not _G.Originals[player.Name] then
         _G.Originals[player.Name] = {
             Size = hrp.Size,
@@ -132,7 +104,6 @@ local function applyHitbox(player)
         }
     end
     local orig = _G.Originals[player.Name]
-
     if _G.AntiWall and visibilityCache[player.Name] == false then
         hrp.Size = orig.Size
         hrp.Transparency = orig.Transparency
@@ -141,7 +112,6 @@ local function applyHitbox(player)
         hrp.CanCollide = orig.CanCollide
         return
     end
-
     if _G.HitboxEnabled then
         if _G.HeadSize then hrp.Size = Vector3.new(_G.HeadSize, _G.HeadSize, _G.HeadSize) end
         if _G.Transparency then hrp.Transparency = _G.Transparency end
@@ -157,7 +127,6 @@ local function applyHitbox(player)
     end
 end
 
--- Anti-wall visibility updater
 task.spawn(function()
     while true do
         if _G.AntiWall then
@@ -165,9 +134,7 @@ task.spawn(function()
                 if plr ~= LocalPlayer then
                     local char = plr.Character
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        visibilityCache[plr.Name] = isVisible(hrp)
-                    end
+                    if hrp then visibilityCache[plr.Name] = isVisible(hrp) end
                 end
             end
         end
@@ -175,17 +142,13 @@ task.spawn(function()
     end
 end)
 
--- Hitbox application loop
 task.spawn(function()
     while true do
-        for _, plr in ipairs(Players:GetPlayers()) do
-            applyHitbox(plr)
-        end
+        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
         task.wait(0.16)
     end
 end)
 
--- New character connection
 local function onCharacterAdded(player, character)
     character:WaitForChild("HumanoidRootPart", 5)
     task.wait(0.1)
@@ -201,23 +164,17 @@ Players.PlayerAdded:Connect(function(plr)
 end)
 
 -- ==================== ESP ====================
-
 _G.ESPEnabled = false
 local highlights = {}
 
 local function removeHighlight(player)
     local h = highlights[player]
-    if h then
-        pcall(function() h:Destroy() end)
-        highlights[player] = nil
-    end
+    if h then pcall(function() h:Destroy() end); highlights[player] = nil end
 end
 
 local function createHighlight(player, color)
     local char = player.Character
-    if not char then return end
-    if not char:FindFirstChild("HumanoidRootPart") then return end
-
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
     local h = highlights[player]
     if not h or h.Parent == nil or h.Adornee ~= char then
         if h then pcall(function() h:Destroy() end) end
@@ -234,90 +191,66 @@ end
 
 local function updateESP()
     if not _G.ESPEnabled then
-        for plr,_ in pairs(highlights) do
-            removeHighlight(plr)
-        end
+        for plr,_ in pairs(highlights) do removeHighlight(plr) end
         return
     end
-
     local enemies = getEnemies()
     if not enemies or #enemies == 0 then
-        for plr,_ in pairs(highlights) do
-            removeHighlight(plr)
-        end
+        for plr,_ in pairs(highlights) do removeHighlight(plr) end
         return
     end
-
     local redFrame, blueFrame = getTeamFrames()
-    local enemyColor
+    local enemyColor = Color3.fromRGB(255,0,0)
     if redFrame and blueFrame then
         local redRaw = readNames(redFrame)
         local youInRed = false
         for _, n in ipairs(redRaw) do
-            if normalizeName(n) == normalizeName(LocalPlayer.Name) then
-                youInRed = true
-                break
-            end
+            if normalizeName(n) == normalizeName(LocalPlayer.Name) then youInRed = true; break end
         end
-        enemyColor = youInRed and Color3.fromRGB(0, 0, 255) or Color3.fromRGB(255, 0, 0)
-    else
-        enemyColor = Color3.fromRGB(255, 0, 0)
+        enemyColor = youInRed and Color3.fromRGB(0,0,255) or Color3.fromRGB(255,0,0)
     end
-
     local enemySet = {}
     for _, e in ipairs(enemies) do enemySet[e] = true end
     for plr,_ in pairs(highlights) do
-        if not enemySet[plr] then
-            removeHighlight(plr)
-        end
+        if not enemySet[plr] then removeHighlight(plr) end
     end
-
-    for _, enemy in ipairs(enemies) do
-        createHighlight(enemy, enemyColor)
-    end
+    for _, enemy in ipairs(enemies) do createHighlight(enemy, enemyColor) end
 end
 
 RunService.RenderStepped:Connect(function()
-    if _G.ESPEnabled then
-        pcall(updateESP)
-    else
-        for plr,_ in pairs(highlights) do
-            removeHighlight(plr)
-        end
-    end
+    if _G.ESPEnabled then pcall(updateESP) else for plr,_ in pairs(highlights) do removeHighlight(plr) end end
 end)
 
-local function onESPCharacterAdded(player)
-    if _G.ESPEnabled then
-        task.defer(updateESP)
-    end
-end
-
 for _, plr in ipairs(Players:GetPlayers()) do
-    plr.CharacterAdded:Connect(function() onESPCharacterAdded(plr) end)
+    plr.CharacterAdded:Connect(function() if _G.ESPEnabled then task.defer(updateESP) end end)
 end
 Players.PlayerAdded:Connect(function(plr)
-    plr.CharacterAdded:Connect(function() onESPCharacterAdded(plr) end)
+    plr.CharacterAdded:Connect(function() if _G.ESPEnabled then task.defer(updateESP) end end)
 end)
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.5)
     if _G.ESPEnabled then updateESP() end
 end)
 
--- ==================== Auto Collect Cinco Pickups (SAFE) ====================
+-- ==================== SAFE AUTO COLLECT (Distance Filtered) ====================
 _G.AutoCollectPickups = false
-_G.CollectDelay = 1.5  -- seconds between touches (higher = safer)
-local collectedPickups = {}  -- track already collected pickups
+_G.CollectDelay = 2.0
+_G.MaxCollectDistance = 150
 
+local collectedPickups = {}
 local SpawnablesClient = workspace:FindFirstChild("Spawnables") and workspace.Spawnables:FindFirstChild("SpawnablesClient")
 
-local function getPickups()
+local function getNearbyPickups()
     local pickups = {}
     if not SpawnablesClient then return pickups end
+    local char = LocalPlayer.Character
+    if not char then return pickups end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return pickups end
+    local pos = hrp.Position
     for _, obj in ipairs(SpawnablesClient:GetChildren()) do
-        if obj:IsA("BasePart") and obj:FindFirstChild("TouchInterest") then
-            -- Only add if we haven't collected it yet
-            if not collectedPickups[obj] then
+        if obj:IsA("BasePart") and obj:FindFirstChild("TouchInterest") and not collectedPickups[obj] then
+            if (obj.Position - pos).Magnitude <= _G.MaxCollectDistance then
                 table.insert(pickups, obj)
             end
         end
@@ -330,49 +263,27 @@ local function touchPickup(part)
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
-    -- Mark as collected immediately to avoid re-touching
     collectedPickups[part] = true
-
-    -- Use pcall to catch any errors
-    local success = pcall(function()
+    pcall(function()
         firetouchinterest(hrp, part, 0)
         task.wait(0.05)
         firetouchinterest(hrp, part, 1)
     end)
-    
-    if not success then
-        -- If it failed, remove mark so we can retry later
-        collectedPickups[part] = nil
-    end
-    
-    -- Small extra wait to let the game process the touch
     task.wait(0.1)
 end
 
--- Clean up collectedPickups when pickups are destroyed
-local function onPickupRemoved(obj)
-    if collectedPickups[obj] then
-        collectedPickups[obj] = nil
-    end
-end
-
 if SpawnablesClient then
-    SpawnablesClient.ChildRemoved:Connect(onPickupRemoved)
+    SpawnablesClient.ChildRemoved:Connect(function(obj) collectedPickups[obj] = nil end)
 end
 
--- Main loop: collect one pickup at a time, slowly
 task.spawn(function()
     while true do
         if _G.AutoCollectPickups then
-            local pickups = getPickups()
-            if #pickups > 0 then
-                -- Collect the first uncollected pickup only
-                touchPickup(pickups[1])
-                -- Wait full delay before next collection
+            local nearby = getNearbyPickups()
+            if #nearby > 0 then
+                touchPickup(nearby[1])
                 task.wait(_G.CollectDelay)
             else
-                -- No pickups, wait a bit before scanning again
                 task.wait(0.5)
             end
         else
@@ -382,145 +293,30 @@ task.spawn(function()
 end)
 
 -- ==================== Rayfield GUI ====================
-
 local Window = Rayfield:CreateWindow({
-    Name = "Hitbox + ESP + Safe Auto Collect",
-    LoadingTitle = "All-in-One",
-    LoadingSubtitle = "Cinco de Mayo Edition",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "CincoTools",
-        FileName = "Config"
-    },
+    Name = "Safe Cinco Tools",
+    LoadingTitle = "Hitbox + ESP + Auto Collect",
+    LoadingSubtitle = "Stable Edition",
+    ConfigurationSaving = { Enabled = true, FolderName = "SafeCinco", FileName = "Config" },
     KeySystem = false
 })
 
 local MainTab = Window:CreateTab("Main", 15403121940)
 
--- Hitbox section
-MainTab:CreateLabel("Hitbox Expander (with Anti‑Wall)")
+MainTab:CreateLabel("Hitbox Expander")
+MainTab:CreateToggle({ Name = "Enable Hitbox", CurrentValue = false, Callback = function(v) _G.HitboxEnabled = v; for _,p in pairs(Players:GetPlayers()) do applyHitbox(p) end end })
+MainTab:CreateToggle({ Name = "Anti‑Wall Shot", CurrentValue = false, Callback = function(v) _G.AntiWall = v; if not v then visibilityCache = {}; for _,p in pairs(Players:GetPlayers()) do applyHitbox(p) end end end })
+MainTab:CreateInput({ Name = "Head Size (1-50)", PlaceholderText = "5", Callback = function(txt) local n=tonumber(txt); _G.HeadSize=n and math.clamp(n,1,50) or nil; for _,p in pairs(Players:GetPlayers()) do applyHitbox(p) end end })
+MainTab:CreateInput({ Name = "Transparency (0-1)", PlaceholderText = "0.5", Callback = function(txt) local n=tonumber(txt); _G.Transparency=n and math.clamp(n,0,1) or nil; for _,p in pairs(Players:GetPlayers()) do applyHitbox(p) end end })
+MainTab:CreateDropdown({ Name = "Hitbox Color", Options = {"Bright red","Bright blue","Bright yellow","Bright green","White","Black","Gray"}, CurrentOption="Bright red", Callback = function(opt) _G.SelectedColor=opt; for _,p in pairs(Players:GetPlayers()) do applyHitbox(p) end end })
 
-MainTab:CreateToggle({
-    Name = "Enable Hitbox",
-    CurrentValue = false,
-    Callback = function(v)
-        _G.HitboxEnabled = v
-        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end
-})
+MainTab:CreateLabel("ESP")
+MainTab:CreateToggle({ Name = "Enable ESP", CurrentValue = false, Callback = function(v) _G.ESPEnabled=v; if v then updateESP() else for plr,_ in pairs(highlights) do removeHighlight(plr) end end end })
 
-MainTab:CreateToggle({
-    Name = "Anti‑Wall Shot (only expand when visible)",
-    CurrentValue = false,
-    Callback = function(v)
-        _G.AntiWall = v
-        if not v then
-            visibilityCache = {}
-            for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
-        end
-    end
-})
+MainTab:CreateLabel("Auto Collect Cinco (Safe)")
+MainTab:CreateToggle({ Name = "Auto Collect Pickups", CurrentValue = false, Callback = function(v) _G.AutoCollectPickups=v; if not v then collectedPickups={} end end })
+MainTab:CreateSlider({ Name = "Collect Delay (sec)", Range = {1.5,6}, Increment = 0.5, Suffix = "s", CurrentValue = 2.0, Callback = function(v) _G.CollectDelay=v end })
+MainTab:CreateSlider({ Name = "Max Collection Distance", Range = {50,300}, Increment = 10, Suffix = "studs", CurrentValue = 150, Callback = function(v) _G.MaxCollectDistance=v end })
+MainTab:CreateButton({ Name = "Test Collect (closest)", Callback = function() local nearby = getNearbyPickups(); if #nearby>0 then touchPickup(nearby[1]); Rayfield:Notify({Title="Auto Collect",Content="Touched closest pickup",Duration=2}) else Rayfield:Notify({Title="Auto Collect",Content="No nearby pickups",Duration=2}) end end })
 
-MainTab:CreateInput({
-    Name = "Head Size (1-50)",
-    PlaceholderText = "e.g., 5",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(txt)
-        local n = tonumber(txt)
-        _G.HeadSize = n and math.clamp(n, 1, 50) or nil
-        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end
-})
-
-MainTab:CreateInput({
-    Name = "Transparency (0-1)",
-    PlaceholderText = "0 = solid, 1 = invisible",
-    RemoveTextAfterFocusLost = false,
-    Callback = function(txt)
-        local n = tonumber(txt)
-        _G.Transparency = n and math.clamp(n, 0, 1) or nil
-        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end
-})
-
-MainTab:CreateDropdown({
-    Name = "Hitbox Color",
-    Options = {"Bright red", "Bright blue", "Bright yellow", "Bright green", "White", "Black", "Gray"},
-    CurrentOption = "Bright red",
-    Callback = function(opt)
-        _G.SelectedColor = opt
-        for _, plr in ipairs(Players:GetPlayers()) do applyHitbox(plr) end
-    end
-})
-
--- ESP section
-MainTab:CreateLabel("ESP (Enemy Team Glow)")
-
-MainTab:CreateToggle({
-    Name = "Enable ESP",
-    CurrentValue = false,
-    Callback = function(v)
-        _G.ESPEnabled = v
-        if v then
-            updateESP()
-        else
-            for plr,_ in pairs(highlights) do
-                removeHighlight(plr)
-            end
-        end
-    end
-})
-
--- Auto Collect section
-MainTab:CreateLabel("Auto Collect Cinco Pickups (Safe)")
-
-MainTab:CreateToggle({
-    Name = "Auto Collect Pickups",
-    CurrentValue = false,
-    Callback = function(v)
-        _G.AutoCollectPickups = v
-        if not v then
-            -- Clear collected cache when turning off
-            collectedPickups = {}
-        end
-    end
-})
-
-MainTab:CreateSlider({
-    Name = "Collect Delay (seconds)",
-    Range = {1, 5},
-    Increment = 0.5,
-    Suffix = "s",
-    CurrentValue = 1.5,
-    Callback = function(v)
-        _G.CollectDelay = v
-    end
-})
-
-MainTab:CreateButton({
-    Name = "Test Collect Now",
-    Callback = function()
-        local pickups = getPickups()
-        if #pickups > 0 then
-            -- Test collects only one pickup to avoid crashes
-            touchPickup(pickups[1])
-            Rayfield:Notify({
-                Title = "Auto Collect",
-                Content = "Touched one pickup",
-                Duration = 2,
-                Image = 15403175166
-            })
-        else
-            Rayfield:Notify({
-                Title = "Auto Collect",
-                Content = "No pickups found right now",
-                Duration = 2,
-                Image = 15403175166
-            })
-        end
-    end
-})
-
-MainTab:CreateLabel("Note: ESP adapts to enemy team.\nSafe auto‑collect touches one pickup at a time.")
-
-print("All features loaded. Use the Rayfield GUI (side button).")
+print("All features loaded. Use the GUI (side button).")
