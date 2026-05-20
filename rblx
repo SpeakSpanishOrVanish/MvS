@@ -1,8 +1,8 @@
 --[[
-    All-in-One: Hitbox + ESP + Auto Collect Cinco Pickups
+    All-in-One: Hitbox + ESP + Safe Auto Collect Cinco Pickups
     - Hitbox expander (size, color, transparency, anti‑wall)
     - ESP (enemy team highlight through walls)
-    - Auto‑collect physical pickups (Sombrero) via TouchInterest
+    - Safe auto‑collect: touches one pickup at a time with a delay
 --]]
 
 -- Load Rayfield
@@ -304,10 +304,10 @@ LocalPlayer.CharacterAdded:Connect(function()
     if _G.ESPEnabled then updateESP() end
 end)
 
--- ==================== Auto Collect Cinco Pickups ====================
-
+-- ==================== Auto Collect Cinco Pickups (SAFE) ====================
 _G.AutoCollectPickups = false
-_G.CollectDelay = 0.5
+_G.CollectDelay = 1.5  -- seconds between touches (higher = safer)
+local collectedPickups = {}  -- track already collected pickups
 
 local SpawnablesClient = workspace:FindFirstChild("Spawnables") and workspace.Spawnables:FindFirstChild("SpawnablesClient")
 
@@ -316,7 +316,10 @@ local function getPickups()
     if not SpawnablesClient then return pickups end
     for _, obj in ipairs(SpawnablesClient:GetChildren()) do
         if obj:IsA("BasePart") and obj:FindFirstChild("TouchInterest") then
-            table.insert(pickups, obj)
+            -- Only add if we haven't collected it yet
+            if not collectedPickups[obj] then
+                table.insert(pickups, obj)
+            end
         end
     end
     return pickups
@@ -328,47 +331,60 @@ local function touchPickup(part)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    -- Optional teleport (uncomment if firetouchinterest doesn't work from distance)
-    -- hrp.CFrame = part.CFrame * CFrame.new(0, 2, 0)
-    -- task.wait(0.05)
+    -- Mark as collected immediately to avoid re-touching
+    collectedPickups[part] = true
 
-    pcall(function()
+    -- Use pcall to catch any errors
+    local success = pcall(function()
         firetouchinterest(hrp, part, 0)
         task.wait(0.05)
         firetouchinterest(hrp, part, 1)
     end)
+    
+    if not success then
+        -- If it failed, remove mark so we can retry later
+        collectedPickups[part] = nil
+    end
+    
+    -- Small extra wait to let the game process the touch
+    task.wait(0.1)
 end
 
--- Main auto-collect loop
+-- Clean up collectedPickups when pickups are destroyed
+local function onPickupRemoved(obj)
+    if collectedPickups[obj] then
+        collectedPickups[obj] = nil
+    end
+end
+
+if SpawnablesClient then
+    SpawnablesClient.ChildRemoved:Connect(onPickupRemoved)
+end
+
+-- Main loop: collect one pickup at a time, slowly
 task.spawn(function()
     while true do
         if _G.AutoCollectPickups then
             local pickups = getPickups()
-            for _, pickup in ipairs(pickups) do
-                if pickup and pickup.Parent then
-                    touchPickup(pickup)
-                    task.wait(_G.CollectDelay)
-                end
+            if #pickups > 0 then
+                -- Collect the first uncollected pickup only
+                touchPickup(pickups[1])
+                -- Wait full delay before next collection
+                task.wait(_G.CollectDelay)
+            else
+                -- No pickups, wait a bit before scanning again
+                task.wait(0.5)
             end
+        else
+            task.wait(0.5)
         end
-        task.wait(0.2)
     end
 end)
-
--- Instant collect when a new pickup spawns
-if SpawnablesClient then
-    SpawnablesClient.ChildAdded:Connect(function(child)
-        if _G.AutoCollectPickups and child:IsA("BasePart") and child:FindFirstChild("TouchInterest") then
-            task.wait(0.1)
-            touchPickup(child)
-        end
-    end)
-end
 
 -- ==================== Rayfield GUI ====================
 
 local Window = Rayfield:CreateWindow({
-    Name = "Hitbox + ESP + Auto Collect",
+    Name = "Hitbox + ESP + Safe Auto Collect",
     LoadingTitle = "All-in-One",
     LoadingSubtitle = "Cinco de Mayo Edition",
     ConfigurationSaving = {
@@ -456,22 +472,26 @@ MainTab:CreateToggle({
 })
 
 -- Auto Collect section
-MainTab:CreateLabel("Auto Collect Cinco Pickups")
+MainTab:CreateLabel("Auto Collect Cinco Pickups (Safe)")
 
 MainTab:CreateToggle({
     Name = "Auto Collect Pickups",
     CurrentValue = false,
     Callback = function(v)
         _G.AutoCollectPickups = v
+        if not v then
+            -- Clear collected cache when turning off
+            collectedPickups = {}
+        end
     end
 })
 
 MainTab:CreateSlider({
     Name = "Collect Delay (seconds)",
-    Range = {0.2, 2},
-    Increment = 0.1,
+    Range = {1, 5},
+    Increment = 0.5,
     Suffix = "s",
-    CurrentValue = 0.5,
+    CurrentValue = 1.5,
     Callback = function(v)
         _G.CollectDelay = v
     end
@@ -482,13 +502,11 @@ MainTab:CreateButton({
     Callback = function()
         local pickups = getPickups()
         if #pickups > 0 then
-            for _, p in ipairs(pickups) do
-                touchPickup(p)
-                task.wait(0.2)
-            end
+            -- Test collects only one pickup to avoid crashes
+            touchPickup(pickups[1])
             Rayfield:Notify({
                 Title = "Auto Collect",
-                Content = "Touched " .. #pickups .. " pickups",
+                Content = "Touched one pickup",
                 Duration = 2,
                 Image = 15403175166
             })
@@ -503,6 +521,6 @@ MainTab:CreateButton({
     end
 })
 
-MainTab:CreateLabel("Note: ESP color adapts to enemy team.\nAuto‑collect touches physical Sombrero pickups.")
+MainTab:CreateLabel("Note: ESP adapts to enemy team.\nSafe auto‑collect touches one pickup at a time.")
 
 print("All features loaded. Use the Rayfield GUI (side button).")
