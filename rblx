@@ -1,5 +1,5 @@
--- FastDex - MVS - Hitbox + ESP + Hide Button + AutoCollect (toggle)
--- Original by FrannnDev, auto-collect added as requested
+-- FastDex - MVS - Hitbox + ESP (Team-based) + Hide Button + AutoCollect
+-- ESP replaced with Team-property version
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -25,7 +25,7 @@ local Window = Rayfield:CreateWindow({
 })
 
 -- ================================
--- Helper Functions (Team Detection)
+-- Helper Functions (Team Detection for Hitbox – unchanged)
 -- ================================
 local function getTeamFrames()
     local ok, redFrame, blueFrame = pcall(function()
@@ -104,7 +104,7 @@ local function getEnemies()
 end
 
 -- ================================
--- Hitbox Expander (with wall check)
+-- Hitbox Expander (with wall check) – unchanged
 -- ================================
 _G.HeadSize = nil
 _G.Disabled = false
@@ -264,114 +264,100 @@ HitboxTab:CreateInput({
 })
 
 -- ================================
--- ESP (Enemy Highlighting)
+-- NEW ESP (based on Team property)
 -- ================================
 local espEnabled = false
-local highlights = {}
+local Enemy_Color = Color3.fromRGB(255, 0, 0) -- Red
+local TeamCheck = true
 
-local function removeHighlight(player)
-    local h = highlights[player]
-    if h then
-        pcall(function() h:Destroy() end)
-        highlights[player] = nil
-    end
-end
+local function ToggleESP(player, character)
+    if not character then return end
+    
+    -- Remove existing highlight first
+    local existing = character:FindFirstChild("Delta_ESP")
+    if existing then existing:Destroy() end
 
-local function createHighlight(player, color)
-    local char = player.Character
-    if not char then return end
-    if not char:FindFirstChild("HumanoidRootPart") then return end
-
-    local h = highlights[player]
-    if not h or h.Parent == nil or h.Adornee ~= char then
-        if h then pcall(function() h:Destroy() end) end
-        h = Instance.new("Highlight")
-        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        h.FillTransparency = 0.5
-        h.OutlineColor = Color3.fromRGB(255, 255, 255)
-        h.Parent = char
-        highlights[player] = h
-    end
-    h.Adornee = char
-    h.FillColor = color
-end
-
-local function updateESP()
+    -- If ESP is disabled globally, don't add anything
     if not espEnabled then return end
-    local enemies = getEnemies()
-    if not enemies or #enemies == 0 then
-        for plr, _ in pairs(highlights) do removeHighlight(plr) end
-        return
+
+    -- TEAM CHECK: If on same team, stop here (leaves ESP removed)
+    if TeamCheck and player.Team ~= nil and player.Team == LocalPlayer.Team then
+        return 
     end
 
-    -- Determine enemy team color
-    local redFrame, blueFrame = getTeamFrames()
-    if not redFrame or not blueFrame then return end
-    local youInRed = false
-    for _, n in ipairs(readNames(redFrame)) do
-        if normalizeName(n) == normalizeName(LocalPlayer.Name) then
-            youInRed = true
-            break
+    -- CREATE HIGHLIGHT (Enemies Only)
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "Delta_ESP"
+    highlight.Adornee = character
+    highlight.FillColor = Enemy_Color
+    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = Color3.new(1, 1, 1)
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = character
+end
+
+local function MonitorPlayer(player)
+    if player == LocalPlayer then return end
+
+    -- Trigger when character spawns
+    player.CharacterAdded:Connect(function(char)
+        ToggleESP(player, char)
+    end)
+
+    -- Trigger if character already exists
+    if player.Character then
+        task.spawn(ToggleESP, player, player.Character)
+    end
+
+    -- Trigger if they change teams
+    player:GetPropertyChangedSignal("Team"):Connect(function()
+        ToggleESP(player, player.Character)
+    end)
+end
+
+-- Function to refresh all players (used when toggling ESP on/off)
+local function refreshAllESP()
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            ToggleESP(p, p.Character)
         end
     end
-    local enemyColor = youInRed and Color3.fromRGB(0, 0, 255) or Color3.fromRGB(255, 0, 0)
-
-    -- Remove highlights for non-enemies
-    local enemyTable = {}
-    for _, e in ipairs(enemies) do enemyTable[e] = true end
-    for plr, _ in pairs(highlights) do
-        if not enemyTable[plr] then removeHighlight(plr) end
-    end
-
-    -- Add/update highlights for enemies
-    for _, enemy in ipairs(enemies) do
-        createHighlight(enemy, enemyColor)
-    end
 end
+
+-- When you change teams, refresh everyone
+LocalPlayer:GetPropertyChangedSignal("Team"):Connect(function()
+    if espEnabled then
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character then
+                ToggleESP(p, p.Character)
+            end
+        end
+    end
+end)
+
+-- Initialize monitoring (always active, but ESP only appears when enabled)
+for _, p in pairs(Players:GetPlayers()) do
+    MonitorPlayer(p)
+end
+Players.PlayerAdded:Connect(MonitorPlayer)
 
 -- ESP Tab UI
 local ESPTab = Window:CreateTab("ESP", 15403375395)
-ESPTab:CreateLabel("ESP - Highlights enemies through walls")
+ESPTab:CreateLabel("ESP - Highlights enemies using Team property")
+ESPTab:CreateLabel("Color: Red | Team check: ON")
 
 ESPTab:CreateToggle({
     Name = "Enable ESP",
     CurrentValue = false,
     Callback = function(v)
         espEnabled = v
-        if not espEnabled then
-            for _, plr in pairs(Players:GetPlayers()) do
-                removeHighlight(plr)
-            end
-        else
-            updateESP()
-        end
+        refreshAllESP() -- Apply or remove highlights based on new state
     end
 })
 
--- Update ESP on every render step
-RunService.RenderStepped:Connect(function()
-    if espEnabled then
-        pcall(updateESP)
-    end
-end)
-
--- Cleanup when players join/leave/respawn
-Players.PlayerAdded:Connect(function(p)
-    p.CharacterAdded:Connect(function()
-        if espEnabled then task.defer(updateESP) end
-    end)
-end)
-
-Players.PlayerRemoving:Connect(function(p)
-    removeHighlight(p)
-end)
-
-LocalPlayer.CharacterAdded:Connect(function()
-    if espEnabled then
-        task.wait(0.5)
-        updateESP()
-    end
-end)
+-- Optional: add settings for color and team check (uncomment if desired)
+-- ESPTab:CreateColorPicker({Name="Enemy Color", CurrentValue=Enemy_Color, Callback=function(c) Enemy_Color=c; refreshAllESP() end})
+-- ESPTab:CreateToggle({Name="Team Check", CurrentValue=TeamCheck, Callback=function(v) TeamCheck=v; refreshAllESP() end})
 
 -- ================================
 -- Misc: Hide Rayfield Open Button
@@ -434,9 +420,8 @@ MiscTab:CreateButton({
 })
 
 -- ================================
--- AutoCollect Feature (Toggleable)
+-- AutoCollect Feature (unchanged)
 -- ================================
--- The collector code (unaltered except for wrapping in a toggle)
 local remote = ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Networking"):WaitForChild("RE/Events/CollectEventSpawnable")
 local ITEM_NAME = "Sombrero"
 local IsA = game.IsA
@@ -460,7 +445,6 @@ local function startCollector()
     if collectorEnabled then return end
     collectorEnabled = true
 
-    -- Initial scan
     task.spawn(function()
         local descendants = workspace:GetDescendants()
         for i = 1, #descendants do
@@ -472,7 +456,6 @@ local function startCollector()
         end
     end)
 
-    -- Listen for new items
     collectorConnection = workspace.DescendantAdded:Connect(function(newObject)
         if newObject.Name ~= ITEM_NAME and not IsA(newObject, "Model") then
             return
@@ -490,8 +473,7 @@ local function stopCollector()
     end
 end
 
--- Add AutoCollect Tab
-local AutoCollectTab = Window:CreateTab("AutoCollect", 15403175166) -- using a generic image ID
+local AutoCollectTab = Window:CreateTab("AutoCollect", 15403175166)
 AutoCollectTab:CreateLabel("Auto-collect '" .. ITEM_NAME .. "' items (low‑lag mode)")
 
 AutoCollectTab:CreateToggle({
@@ -518,4 +500,4 @@ AutoCollectTab:CreateToggle({
     end
 })
 
-print("FastDex - Hitbox, ESP, Hide Button & AutoCollect loaded.")
+print("FastDex - Hitbox, ESP (Team-based), Hide Button & AutoCollect loaded.")
